@@ -154,7 +154,9 @@ fn update_pipes(app_state: &mut enigma::AppState){
                 object.transform.move_dir([40.0, 0.0, 0.0]);
                 if object.name.contains("COIN") {
                     object.transform.set_scale([0.5, 0.5, 0.5]);
-                    object.transform.move_dir([0.0, -10.0, 0.0]);
+                    if object.transform.get_position().y > 5.0 {
+                        object.transform.move_dir([0.0, -10.0, 0.0]);
+                    }
                 }
             }
         }
