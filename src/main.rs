@@ -32,6 +32,8 @@ fn main() {
 
     // init score
     app_state.add_state_data("SCORE", Box::new(0i32));
+    // a timer for our "Well Done!" message
+    app_state.add_state_data("WELL_DONE_TIMER", Box::new(0i32));
 
     app_state.set_fps(60);
     app_state.set_max_buffers(3);
@@ -41,6 +43,7 @@ fn main() {
     app_state.inject_update_function(Arc::new(player_update));
     app_state.inject_update_function(Arc::new(update_pipes));
     app_state.inject_update_function(Arc::new(check_collision));
+    app_state.inject_update_function(Arc::new(update_ui_timers));
 
     app_state.inject_event(event::EventCharacteristic::KeyPress(event::VirtualKeyCode::Space), Arc::new(player_jump), None);
 
@@ -113,6 +116,25 @@ fn ui_function(context: &ui::Context, app_state: &mut AppState) {
                 );
             });
         });
+
+    let well_done_timer = app_state.get_state_data_value::<i32>("WELL_DONE_TIMER")
+        .map(|t| *t)
+        .unwrap_or(0);
+
+    if well_done_timer > 0 {
+        // Use ui::Area for a frameless, background-less container
+        ui::Area::new(ui::Id::new("well_done_area"))
+            .anchor(ui::Align2::CENTER_CENTER, [0.0, 0.0]) // Still centered
+            .show(context, |ui| {
+                // The text itself remains the same
+                ui.label(
+                    ui::RichText::new("Well Done!")
+                        .color(ui::Color32::from_rgb(255, 215, 0)) // Gold color
+                        .size(50.0)
+                        .strong()
+                );
+            });
+    }
 }
 
 fn setup_scene(app_state: &mut AppState, event_loop:  &mut EventLoop){
@@ -245,6 +267,14 @@ fn spawn_pipes(app_state: &mut AppState, event_loop: &mut EventLoop, x_offset: f
     app_state.add_material(coin_mat);
 }
 
+fn update_ui_timers(app_state: &mut AppState) {
+    if let Some(timer) = app_state.get_state_data_value_mut::<i32>("WELL_DONE_TIMER") {
+        if *timer > 0 {
+            *timer -= 1;
+        }
+    }
+}
+
 fn check_collision(app_state: &mut AppState){
     let player_option = app_state.get_object_mut("PLAYER");
 
@@ -312,6 +342,11 @@ fn check_collision(app_state: &mut AppState){
     } else if colliding == CollisionState::Coin {
         if score % 10 == 0 {
             app_state.play_audio_once("collect-ten");
+            if score > 0 && score % 10 == 0 {
+                if let Some(timer) = app_state.get_state_data_value_mut::<i32>("WELL_DONE_TIMER") {
+                    *timer = 120;
+                }
+            }
         } else {
             app_state.play_audio_once("collect");
         }
