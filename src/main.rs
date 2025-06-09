@@ -15,6 +15,8 @@ const FONT_PRESS_START: &'static [u8] = include_bytes!("res/PrStart.ttf");
 const BACKGROUND_MUSIC: &'static [u8] = include_bytes!("res/background-music.ogg");
 const HIT_SOUND: &'static [u8] = include_bytes!("res/hit-sound.ogg");
 const COLLECT_SOUND: &'static [u8] = include_bytes!("res/collect-sound.ogg");
+const COLLECT_SOUND_TEN: &'static [u8] = include_bytes!("res/collect-sound-2.ogg");
+const WUSH_SOUND: &'static [u8] = include_bytes!("res/wush.ogg");
 
 
 #[derive(PartialEq)]
@@ -50,9 +52,13 @@ fn main() {
     let background_music = AudioClip::from_resource(BACKGROUND_MUSIC, "music");
     let hit = AudioClip::from_resource(HIT_SOUND,"hit");
     let collect = AudioClip::from_resource(COLLECT_SOUND, "collect");
+    let collect_ten = AudioClip::from_resource(COLLECT_SOUND_TEN, "collect-ten");
+    let wush = AudioClip::from_resource(WUSH_SOUND, "wush");
     app_state.add_audio(background_music);
     app_state.add_audio(hit);
     app_state.add_audio(collect);
+    app_state.add_audio(collect_ten);
+    app_state.add_audio(wush);
     app_state.play_audio_loop("music");
 
     event_loop.run(app_state.convert_to_arc_mutex());
@@ -171,6 +177,7 @@ fn player_update(app_state: &mut AppState){
 }
 
 fn player_jump(app_state: &mut AppState){
+    app_state.play_audio_once("wush");
     let player_option = app_state.get_object_mut("PLAYER");
     match player_option {
         Some(player) => {
@@ -271,12 +278,7 @@ fn check_collision(app_state: &mut AppState){
     }
 
 
-    // handling audio
-    if colliding == CollisionState::Pipe{
-        app_state.play_audio_once("hit");
-    } else if colliding == CollisionState::Coin {
-        app_state.play_audio_once("collect");
-    }
+
 
     // setting player positions
     if colliding == CollisionState::Pipe {
@@ -289,16 +291,29 @@ fn check_collision(app_state: &mut AppState){
             None => {}
         }
     }
-
+    let mut score = 0;
     // now lets set the score
     match app_state.get_state_data_value_mut::<i32>("SCORE"){
         Some(s) => {
             if colliding == CollisionState::Coin {
                 *s = *s + 1;
+                score = *s;
             } else if colliding == CollisionState::Pipe {
                 *s = 0;
+                score = 0;
             }
         },
         None => {}
+    }
+
+    // handling audio
+    if colliding == CollisionState::Pipe{
+        app_state.play_audio_once("hit");
+    } else if colliding == CollisionState::Coin {
+        if score % 10 == 0 {
+            app_state.play_audio_once("collect-ten");
+        } else {
+            app_state.play_audio_once("collect");
+        }
     }
 }
