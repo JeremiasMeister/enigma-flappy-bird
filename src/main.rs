@@ -2,6 +2,7 @@ use std::cmp::PartialEq;
 use std::sync::Arc;
 use enigma_3d::{AppState, camera, collision_world, event, EventLoop, light, material, object, postprocessing, texture, ui};
 use enigma_3d::audio::AudioClip;
+use enigma_3d::ui::Vec2;
 
 // resources -> we load not via string but via bytes to include them in the built game
 const BIRD: &'static [u8] = include_bytes!("res/bird.glb");
@@ -10,6 +11,7 @@ const COIN: &'static [u8] = include_bytes!("res/coin.glb");
 const BACKGROUND: &'static [u8] = include_bytes!("res/background.glb");
 const BIRD_TEXTURE: &'static [u8] = include_bytes!("res/bird_texture.png");
 const BACKGROUND_TEXTURE: &'static [u8] = include_bytes!("res/background_texture.png");
+const HEART_TEXTURE: &'static [u8] = include_bytes!("res/heart.png");
 const FONT_PRESS_START: &'static [u8] = include_bytes!("res/PrStart.ttf");
 
 const BACKGROUND_MUSIC: &'static [u8] = include_bytes!("res/background-music.ogg");
@@ -30,10 +32,10 @@ fn main() {
     let mut event_loop = EventLoop::new("Enigma 3D - Flappy Bird", 1080, 720);
     let mut app_state = AppState::new();
 
-    // init score
+    // init score, well done timer and lives
     app_state.add_state_data("SCORE", Box::new(0i32));
-    // a timer for our "Well Done!" message
     app_state.add_state_data("WELL_DONE_TIMER", Box::new(0i32));
+    app_state.add_state_data("LIVES", Box::new(3i32));
 
     app_state.set_fps(60);
     app_state.set_max_buffers(3);
@@ -88,14 +90,35 @@ fn ui_function(context: &ui::Context, app_state: &mut AppState) {
         fonts
     });
 
+    let heart_texture_handle =
+        if let Some(handle) = app_state.get_state_data_value::<ui::TextureHandle>("HEART_TEXTURE_HANDLE") {
+            handle.clone() // Get a clone of the persistent handle
+        } else {
+            // This block now only runs ONCE at the very beginning
+            let image = image::load_from_memory(HEART_TEXTURE).expect("Failed to load heart texture.");
+            let image_buffer = image.to_rgba8();
+            let size = [image.width() as _, image.height() as _];
+            let pixels = image_buffer.as_flat_samples();
+            let color_image = ui::ColorImage::from_rgba_unmultiplied(size, pixels.as_slice());
+
+            let texture_handle = context.load_texture("heart_texture", color_image, Default::default());
+
+            // Store a clone of the handle in the AppState
+            app_state.add_state_data("HEART_TEXTURE_HANDLE", Box::new(texture_handle.clone()));
+            texture_handle
+        };
+
     let score = app_state.get_state_data_value::<i32>("SCORE")
         .map(|s| *s)
+        .unwrap_or(0);
+
+    let lives = app_state.get_state_data_value::<i32>("LIVES")
+        .map(|l| *l)
         .unwrap_or(0);
 
     let top_bar_frame = ui::Frame {
         inner_margin: ui::Margin::symmetric(10.0, 10.0),
         fill: ui::Color32::from_rgba_unmultiplied(0, 0, 0, 45),
-        //stroke: ui::Stroke::new(0.0, ui::Color32::from_gray(45)),
         ..Default::default()
     };
 
@@ -114,6 +137,12 @@ fn ui_function(context: &ui::Context, app_state: &mut AppState) {
                         .size(40.0)
                         .strong(),
                 );
+                ui.with_layout(ui::Layout::right_to_left(ui::Align::Center), |ui| {
+                    for _ in 0..lives {
+                        ui.add_space(5.0);
+                        ui.image((heart_texture_handle.id(), Vec2::new(35.0,35.0)));
+                    }
+                });
             });
         });
 
@@ -307,9 +336,6 @@ fn check_collision(app_state: &mut AppState){
         None => {}
     }
 
-
-
-
     // setting player positions
     if colliding == CollisionState::Pipe {
         match app_state.get_object_mut("PLAYER") {
@@ -321,16 +347,45 @@ fn check_collision(app_state: &mut AppState){
             None => {}
         }
     }
-    let mut score = 0;
+
+    // handle lives
+    let mut live_tracker = 0;
+    match app_state.get_state_data_value_mut::<i32>("LIVES") {
+        Some(live) => {
+            if colliding == CollisionState::Pipe {
+                *live = *live - 1;
+                live_tracker = *live;
+                if *live < 0 {
+                    *live = 0;
+                }
+                live_tracker = *live;
+            }
+        },
+        None => {}
+    }
+
     // now lets set the score
+    let mut score = 0;
     match app_state.get_state_data_value_mut::<i32>("SCORE"){
         Some(s) => {
             if colliding == CollisionState::Coin {
                 *s = *s + 1;
                 score = *s;
             } else if colliding == CollisionState::Pipe {
-                *s = 0;
-                score = 0;
+                if live_tracker <= 0 {
+                    *s = 0;
+                    score = 0;
+                }
+            }
+        },
+        None => {}
+    }
+
+    // finally set lives
+    match app_state.get_state_data_value_mut::<i32>("LIVES") {
+        Some(l) => {
+            if *l <= 0{
+                *l = 3;
             }
         },
         None => {}
