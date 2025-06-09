@@ -1,6 +1,7 @@
 use std::cmp::PartialEq;
 use std::sync::Arc;
 use enigma_3d::{AppState, camera, collision_world, event, EventLoop, light, material, object, postprocessing, texture, ui};
+use enigma_3d::audio::AudioClip;
 
 // resources -> we load not via string but via bytes to include them in the built game
 const BIRD: &'static [u8] = include_bytes!("res/bird.glb");
@@ -10,6 +11,10 @@ const BACKGROUND: &'static [u8] = include_bytes!("res/background.glb");
 const BIRD_TEXTURE: &'static [u8] = include_bytes!("res/bird_texture.png");
 const BACKGROUND_TEXTURE: &'static [u8] = include_bytes!("res/background_texture.png");
 const FONT_PRESS_START: &'static [u8] = include_bytes!("res/PrStart.ttf");
+
+const BACKGROUND_MUSIC: &'static [u8] = include_bytes!("res/background-music.ogg");
+const HIT_SOUND: &'static [u8] = include_bytes!("res/hit-sound.ogg");
+const COLLECT_SOUND: &'static [u8] = include_bytes!("res/collect-sound.ogg");
 
 
 #[derive(PartialEq)]
@@ -40,6 +45,15 @@ fn main() {
     app_state.add_post_process(Box::new(postprocessing::edge::Edge::new(&event_loop.display.clone(), 0.001, [0.0, 0.0, 0.0])));
 
     app_state.inject_gui(Arc::new(ui_function));
+
+    // add audio
+    let background_music = AudioClip::from_resource(BACKGROUND_MUSIC, "music");
+    let hit = AudioClip::from_resource(HIT_SOUND,"hit");
+    let collect = AudioClip::from_resource(COLLECT_SOUND, "collect");
+    app_state.add_audio(background_music);
+    app_state.add_audio(hit);
+    app_state.add_audio(collect);
+    app_state.play_audio_loop("music");
 
     event_loop.run(app_state.convert_to_arc_mutex());
 }
@@ -254,6 +268,14 @@ fn check_collision(app_state: &mut AppState){
             }
         },
         None => {}
+    }
+
+
+    // handling audio
+    if colliding == CollisionState::Pipe{
+        app_state.play_audio_once("hit");
+    } else if colliding == CollisionState::Coin {
+        app_state.play_audio_once("collect");
     }
 
     // setting player positions
