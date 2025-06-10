@@ -45,6 +45,7 @@ fn main() {
     app_state.add_state_data("HIGHSCORE", Box::new(highscore));
     app_state.add_state_data("WELL_DONE_TIMER", Box::new(0i32));
     app_state.add_state_data("TRY_AGAIN_TIMER", Box::new(0i32));
+    app_state.add_state_data("SAFE_TIMER", Box::new(0i32));
     app_state.add_state_data("LIVES", Box::new(3i32));
     app_state.add_state_data("PAUSE", Box::new(false));
 
@@ -305,9 +306,18 @@ fn player_update(app_state: &mut AppState){
         },
         None => {}
     }
+    let timer_value = *app_state.get_state_data_value::<i32>("SAFE_TIMER").unwrap_or(&0);
+    let is_safe = timer_value > 0;
     let player_option = app_state.get_object_mut("PLAYER");
     match player_option {
         Some(player) => {
+            if is_safe {
+                if (timer_value / 5) % 2 == 0 {
+                    player.transform.set_scale([2.0, 2.0, 2.0]);
+                } else {
+                    player.transform.set_scale([0.0, 0.0, 0.0]); // "Hide" the player
+                }
+            }
             if player.transform.get_position().y > -5.0 {
                 player.transform.move_dir_array([0.0, -0.05, 0.0]);
                 player.transform.rotate([0.0, 0.0, -0.7])
@@ -432,20 +442,20 @@ fn update_ui_timers(app_state: &mut AppState) {
             *timer -= 1;
         }
     }
+    if let Some(timer) = app_state.get_state_data_value_mut::<i32>("SAFE_TIMER") {
+        if *timer > 0 {
+            *timer -= 1;
+        }
+    }
 }
 
 fn check_collision(app_state: &mut AppState){
     match app_state.get_state_data_value_mut::<bool>("PAUSE") {
-        Some(p) => {
-            if *p {
-                return;
-            }
-        },
-        None => {}
+        Some(p) if *p => return,
+        _ => {}
     }
-
+    let is_safe = app_state.get_state_data_value::<i32>("SAFE_TIMER").map_or(false, |t| *t > 0);
     let player_option = app_state.get_object_mut("PLAYER");
-
     // define temp var to store collision
     let mut colliding = CollisionState::None;
 
@@ -463,11 +473,11 @@ fn check_collision(app_state: &mut AppState){
                         continue;
                     }
                 }
-                if object.name.contains("PIPE") {
+                if !is_safe && object.name.contains("PIPE") {
                     let object_bounds = object.get_bounding_box();
                     if collision_world::is_colliding(&player_bounds, &object_bounds){
                         colliding = CollisionState::Pipe;
-                        continue;
+                        break;
                     }
                 }
             }
@@ -477,86 +487,72 @@ fn check_collision(app_state: &mut AppState){
 
     // setting player positions
     if colliding == CollisionState::Pipe {
-        match app_state.get_object_mut("PLAYER") {
-            Some(player) => {
-                player.transform.set_position([0.0, 0.0, 0.0]);
-                player.transform.set_scale([2.0, 2.0, 2.0]);
-                player.transform.set_rotation([0.0, 0.0, 0.0]);
-            },
-            None => {}
+        if let Some(player) = app_state.get_object_mut("PLAYER") {
+            player.transform.set_position([0.0, 0.0, 0.0]);
+            player.transform.set_rotation([0.0, 0.0, 0.0]);
         }
     }
 
+
     // handle lives
-    let mut live_tracker = 0;
-    match app_state.get_state_data_value_mut::<i32>("LIVES") {
-        Some(live) => {
-            if colliding == CollisionState::Pipe {
-                *live = *live - 1;
-                if *live < 0 {
-                    *live = 0;
-                }
-                live_tracker = *live;
-            }
-        },
-        None => {}
+    let mut live_tracker = app_state.get_state_data_value::<i32>("LIVES").map_or(0, |l| *l);
+    if colliding == CollisionState::Pipe {
+        if let Some(live) = app_state.get_state_data_value_mut::<i32>("LIVES") {
+            *live -= 1;
+            live_tracker = *live;
+        }
     }
 
     // now lets set the score
-    let mut score = 0;
-    match app_state.get_state_data_value_mut::<i32>("SCORE"){
-        Some(s) => {
-            if colliding == CollisionState::Coin {
-                *s = *s + 1;
-                score = *s;
-            } else if colliding == CollisionState::Pipe {
-                if live_tracker <= 0 {
-                    *s = 0;
-                    score = 0;
-                }
+    let mut current_score = app_state.get_state_data_value::<i32>("SCORE").map_or(0, |s| *s);
+    if let Some(s) = app_state.get_state_data_value_mut::<i32>("SCORE") {
+        if colliding == CollisionState::Coin {
+            *s += 1;
+            current_score = *s;
+        } else if colliding == CollisionState::Pipe {
+            if live_tracker <= 0 {
+                *s = 0;
+                current_score = 0;
             }
-        },
-        None => {}
+        }
     }
 
     // let's set the highscore
-    match app_state.get_state_data_value_mut::<i32>("HIGHSCORE"){
-        Some(hs) => {
-            if colliding == CollisionState::Coin && score > 0 {
-                if score > *hs {
-                    *hs = score;
-                    save_highscore(*hs);
-                }
+    if colliding == CollisionState::Coin {
+        if let Some(hs) = app_state.get_state_data_value_mut::<i32>("HIGHSCORE") {
+            if current_score > *hs {
+                *hs = current_score;
+                save_highscore(*hs);
             }
-        },
-        None => {}
+        }
     }
 
     // finally set lives
-    match app_state.get_state_data_value_mut::<i32>("LIVES") {
-        Some(l) => {
-            if *l <= 0{
-                *l = 3;
-            }
-        },
-        None => {}
+    if colliding == CollisionState::Pipe && live_tracker <= 0 {
+        if let Some(l) = app_state.get_state_data_value_mut::<i32>("LIVES") {
+            *l = 3;
+        }
     }
 
     // handling audio
-    if colliding == CollisionState::Pipe{
-        if live_tracker == 0  {
+    if colliding == CollisionState::Pipe {
+        if live_tracker <= 0 {
             app_state.play_audio_once("game-over");
             if let Some(timer) = app_state.get_state_data_value_mut::<i32>("TRY_AGAIN_TIMER") {
-                *timer = 120;
+                *timer = 120; // 2 seconds
             }
         } else {
             app_state.play_audio_once("hit");
+            // Set the safe timer since a life was lost but it's not game over
+            if let Some(timer) = app_state.get_state_data_value_mut::<i32>("SAFE_TIMER") {
+                *timer = 120; // 2 seconds of immunity
+            }
         }
     } else if colliding == CollisionState::Coin {
-        if score > 0 && score % 10 == 0  {
+        if current_score > 0 && current_score % 10 == 0 {
             app_state.play_audio_once("collect-ten");
             if let Some(timer) = app_state.get_state_data_value_mut::<i32>("WELL_DONE_TIMER") {
-                *timer = 120;
+                *timer = 120; // 2 seconds
             }
         } else {
             app_state.play_audio_once("collect");
