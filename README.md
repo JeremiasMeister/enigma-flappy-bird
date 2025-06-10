@@ -3,4 +3,5 @@ the first demo game made with enigma, my 3d renderer. enigma in its core is fair
 
 The enigma engine core can be found here: https://github.com/JeremiasMeister/enigma-3d or convenient with running `cargo add enigma-3d` or on https://crates.io/crates/enigma-3d 
 
-![image](https://github.com/user-attachments/assets/f5b587ed-f1fc-4b9e-8494-c05ca8896d25)
+![image](https://github.com/user-attachments/assets/c91d05d0-18bd-4794-b6f0-69da6f28265e)
+
