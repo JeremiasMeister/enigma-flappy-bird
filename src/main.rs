@@ -3,6 +3,7 @@ use std::sync::Arc;
 use enigma_3d::{AppState, camera, collision_world, event, EventLoop, light, material, object, postprocessing, texture, ui};
 use enigma_3d::audio::AudioClip;
 use enigma_3d::ui::Vec2;
+use rand::Rng;
 
 // resources -> we load not via string but via bytes to include them in the built game
 const BIRD: &'static [u8] = include_bytes!("res/bird.glb");
@@ -19,6 +20,7 @@ const HIT_SOUND: &'static [u8] = include_bytes!("res/hit-sound.ogg");
 const COLLECT_SOUND: &'static [u8] = include_bytes!("res/collect-sound.ogg");
 const COLLECT_SOUND_TEN: &'static [u8] = include_bytes!("res/collect-sound-2.ogg");
 const WUSH_SOUND: &'static [u8] = include_bytes!("res/wush.ogg");
+const GAME_OVER_SOUND: &'static [u8] = include_bytes!("res/game-over.ogg");
 
 
 #[derive(PartialEq)]
@@ -35,7 +37,9 @@ fn main() {
     // init score, well done timer and lives
     app_state.add_state_data("SCORE", Box::new(0i32));
     app_state.add_state_data("WELL_DONE_TIMER", Box::new(0i32));
+    app_state.add_state_data("TRY_AGAIN_TIMER", Box::new(0i32));
     app_state.add_state_data("LIVES", Box::new(3i32));
+    app_state.add_state_data("PAUSE", Box::new(false));
 
     app_state.set_fps(60);
     app_state.set_max_buffers(3);
@@ -48,6 +52,7 @@ fn main() {
     app_state.inject_update_function(Arc::new(update_ui_timers));
 
     app_state.inject_event(event::EventCharacteristic::KeyPress(event::VirtualKeyCode::Space), Arc::new(player_jump), None);
+    app_state.inject_event(event::EventCharacteristic::KeyPress(event::VirtualKeyCode::Escape), Arc::new(toggle_pause), None);
 
     app_state.add_post_process(Box::new(postprocessing::edge::Edge::new(&event_loop.display.clone(), 0.001, [0.0, 0.0, 0.0])));
 
@@ -59,11 +64,13 @@ fn main() {
     let collect = AudioClip::from_resource(COLLECT_SOUND, "collect");
     let collect_ten = AudioClip::from_resource(COLLECT_SOUND_TEN, "collect-ten");
     let wush = AudioClip::from_resource(WUSH_SOUND, "wush");
+    let game_over = AudioClip::from_resource(GAME_OVER_SOUND, "game-over");
     app_state.add_audio(background_music);
     app_state.add_audio(hit);
     app_state.add_audio(collect);
     app_state.add_audio(collect_ten);
     app_state.add_audio(wush);
+    app_state.add_audio(game_over);
     app_state.play_audio_loop("music");
 
     event_loop.run(app_state.convert_to_arc_mutex());
@@ -116,6 +123,10 @@ fn ui_function(context: &ui::Context, app_state: &mut AppState) {
         .map(|l| *l)
         .unwrap_or(0);
 
+    let pause = app_state.get_state_data_value::<bool>("PAUSE")
+        .map(|l| *l)
+        .unwrap_or(false);
+
     let top_bar_frame = ui::Frame {
         inner_margin: ui::Margin::symmetric(10.0, 10.0),
         fill: ui::Color32::from_rgba_unmultiplied(0, 0, 0, 45),
@@ -150,7 +161,11 @@ fn ui_function(context: &ui::Context, app_state: &mut AppState) {
         .map(|t| *t)
         .unwrap_or(0);
 
-    if well_done_timer > 0 {
+    let try_again_timer = app_state.get_state_data_value::<i32>("TRY_AGAIN_TIMER")
+        .map(|t| *t)
+        .unwrap_or(0);
+
+    if well_done_timer > 0 && score > 0 {
         // Use ui::Area for a frameless, background-less container
         ui::Area::new(ui::Id::new("well_done_area"))
             .anchor(ui::Align2::CENTER_CENTER, [0.0, 0.0]) // Still centered
@@ -159,6 +174,32 @@ fn ui_function(context: &ui::Context, app_state: &mut AppState) {
                 ui.label(
                     ui::RichText::new("Well Done!")
                         .color(ui::Color32::from_rgb(255, 215, 0)) // Gold color
+                        .size(50.0)
+                        .strong()
+                );
+            });
+    } else if try_again_timer > 0 && score == 0 {
+        ui::Area::new(ui::Id::new("try_again_area"))
+            .anchor(ui::Align2::CENTER_CENTER, [0.0, 0.0]) // Still centered
+            .show(context, |ui| {
+                // The text itself remains the same
+                ui.label(
+                    ui::RichText::new("Oh no! Try Again!")
+                        .color(ui::Color32::from_rgb(255, 128, 0))
+                        .size(50.0)
+                        .strong()
+                );
+            });
+    }
+
+    if pause {
+        ui::Area::new(ui::Id::new("pause_area"))
+            .anchor(ui::Align2::CENTER_CENTER, [0.0, 0.0]) // Still centered
+            .show(context, |ui| {
+                // The text itself remains the same
+                ui.label(
+                    ui::RichText::new("Pause")
+                        .color(ui::Color32::from_rgb(0, 0, 0)) // Gold color
                         .size(50.0)
                         .strong()
                 );
@@ -204,17 +245,25 @@ fn setup_scene(app_state: &mut AppState, event_loop:  &mut EventLoop){
     app_state.add_material(player_mat);
 
     //create the pipes
-    spawn_pipes(app_state, event_loop, 0.0, 0.0);
-    spawn_pipes(app_state, event_loop, 5.0, 1.0);
-    spawn_pipes(app_state, event_loop, 10.0, 0.0);
-    spawn_pipes(app_state, event_loop, 15.0, -1.0);
-    spawn_pipes(app_state, event_loop, 20.0, 0.0);
-    spawn_pipes(app_state, event_loop, 25.0, 1.0);
-    spawn_pipes(app_state, event_loop, 30.0, 0.0);
-    spawn_pipes(app_state, event_loop, 35.0, -1.0);
+    spawn_pipes(app_state, event_loop, 0.0);
+    spawn_pipes(app_state, event_loop, 5.0);
+    spawn_pipes(app_state, event_loop, 10.0);
+    spawn_pipes(app_state, event_loop, 15.0);
+    spawn_pipes(app_state, event_loop, 20.0);
+    spawn_pipes(app_state, event_loop, 25.0);
+    spawn_pipes(app_state, event_loop, 30.0);
+    spawn_pipes(app_state, event_loop, 35.0);
 }
 
 fn player_update(app_state: &mut AppState){
+    match app_state.get_state_data_value_mut::<bool>("PAUSE") {
+        Some(p) => {
+            if *p {
+                return;
+            }
+        },
+        None => {}
+    }
     let player_option = app_state.get_object_mut("PLAYER");
     match player_option {
         Some(player) => {
@@ -227,7 +276,25 @@ fn player_update(app_state: &mut AppState){
     }
 }
 
+fn toggle_pause(app_state: &mut AppState){
+    match app_state.get_state_data_value_mut::<bool>("PAUSE") {
+        Some(p) => {
+            *p = !*p;
+            app_state.toggle_pause_audio("music");
+        },
+        None => {}
+    }
+}
+
 fn player_jump(app_state: &mut AppState){
+    match app_state.get_state_data_value_mut::<bool>("PAUSE") {
+        Some(p) => {
+            if *p {
+                return;
+            }
+        },
+        None => {}
+    }
     app_state.play_audio_once("wush");
     let player_option = app_state.get_object_mut("PLAYER");
     match player_option {
@@ -242,6 +309,14 @@ fn player_jump(app_state: &mut AppState){
 }
 
 fn update_pipes(app_state: &mut AppState){
+    match app_state.get_state_data_value_mut::<bool>("PAUSE") {
+        Some(p) => {
+            if *p {
+                return;
+            }
+        },
+        None => {}
+    }
     for object in app_state.get_objects_mut(){
         if object.name.contains("PIPE") || object.name.contains("COIN") {
             object.transform.move_dir_array([-0.05, 0.0, 0.0]);
@@ -262,7 +337,8 @@ fn update_pipes(app_state: &mut AppState){
     }
 }
 
-fn spawn_pipes(app_state: &mut AppState, event_loop: &mut EventLoop, x_offset: f32, y_offset: f32){
+fn spawn_pipes(app_state: &mut AppState, event_loop: &mut EventLoop, x_offset: f32){
+    let y_offset = rand::rng().random_range(-2.0..2.0);
     let pipe_spacing = 7.0;
 
     let mut pipe1_mat = material::Material::lit_pbr(event_loop.get_display_clone(), false);
@@ -297,7 +373,20 @@ fn spawn_pipes(app_state: &mut AppState, event_loop: &mut EventLoop, x_offset: f
 }
 
 fn update_ui_timers(app_state: &mut AppState) {
+    match app_state.get_state_data_value_mut::<bool>("PAUSE") {
+        Some(p) => {
+            if *p {
+                return;
+            }
+        },
+        None => {}
+    }
     if let Some(timer) = app_state.get_state_data_value_mut::<i32>("WELL_DONE_TIMER") {
+        if *timer > 0 {
+            *timer -= 1;
+        }
+    }
+    if let Some(timer) = app_state.get_state_data_value_mut::<i32>("TRY_AGAIN_TIMER") {
         if *timer > 0 {
             *timer -= 1;
         }
@@ -305,6 +394,15 @@ fn update_ui_timers(app_state: &mut AppState) {
 }
 
 fn check_collision(app_state: &mut AppState){
+    match app_state.get_state_data_value_mut::<bool>("PAUSE") {
+        Some(p) => {
+            if *p {
+                return;
+            }
+        },
+        None => {}
+    }
+
     let player_option = app_state.get_object_mut("PLAYER");
 
     // define temp var to store collision
@@ -354,7 +452,6 @@ fn check_collision(app_state: &mut AppState){
         Some(live) => {
             if colliding == CollisionState::Pipe {
                 *live = *live - 1;
-                live_tracker = *live;
                 if *live < 0 {
                     *live = 0;
                 }
@@ -393,14 +490,19 @@ fn check_collision(app_state: &mut AppState){
 
     // handling audio
     if colliding == CollisionState::Pipe{
-        app_state.play_audio_once("hit");
+        if live_tracker == 0  {
+            app_state.play_audio_once("game-over");
+            if let Some(timer) = app_state.get_state_data_value_mut::<i32>("TRY_AGAIN_TIMER") {
+                *timer = 120;
+            }
+        } else {
+            app_state.play_audio_once("hit");
+        }
     } else if colliding == CollisionState::Coin {
-        if score % 10 == 0 {
+        if score > 0 && score % 10 == 0  {
             app_state.play_audio_once("collect-ten");
-            if score > 0 && score % 10 == 0 {
-                if let Some(timer) = app_state.get_state_data_value_mut::<i32>("WELL_DONE_TIMER") {
-                    *timer = 120;
-                }
+            if let Some(timer) = app_state.get_state_data_value_mut::<i32>("WELL_DONE_TIMER") {
+                *timer = 120;
             }
         } else {
             app_state.play_audio_once("collect");
