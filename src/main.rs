@@ -4,6 +4,9 @@ use enigma_3d::{AppState, camera, collision_world, event, EventLoop, light, mate
 use enigma_3d::audio::AudioClip;
 use enigma_3d::ui::Vec2;
 use rand::Rng;
+use std::fs;
+use std::io::{Write, Read};
+use std::path::Path;
 
 // resources -> we load not via string but via bytes to include them in the built game
 const BIRD: &'static [u8] = include_bytes!("res/bird.glb");
@@ -21,6 +24,7 @@ const COLLECT_SOUND: &'static [u8] = include_bytes!("res/collect-sound.ogg");
 const COLLECT_SOUND_TEN: &'static [u8] = include_bytes!("res/collect-sound-2.ogg");
 const WUSH_SOUND: &'static [u8] = include_bytes!("res/wush.ogg");
 const GAME_OVER_SOUND: &'static [u8] = include_bytes!("res/game-over.ogg");
+const HIGHSCORE_FILE: &str = "enigma-3d_flappy_bird_highscore.txt";
 
 
 #[derive(PartialEq)]
@@ -34,8 +38,11 @@ fn main() {
     let mut event_loop = EventLoop::new("Enigma 3D - Flappy Bird", 1080, 720);
     let mut app_state = AppState::new();
 
+    let highscore = load_highscore();
+
     // init score, well done timer and lives
     app_state.add_state_data("SCORE", Box::new(0i32));
+    app_state.add_state_data("HIGHSCORE", Box::new(highscore));
     app_state.add_state_data("WELL_DONE_TIMER", Box::new(0i32));
     app_state.add_state_data("TRY_AGAIN_TIMER", Box::new(0i32));
     app_state.add_state_data("LIVES", Box::new(3i32));
@@ -127,6 +134,10 @@ fn ui_function(context: &ui::Context, app_state: &mut AppState) {
         .map(|l| *l)
         .unwrap_or(false);
 
+    let highscore = app_state.get_state_data_value::<i32>("HIGHSCORE")
+        .map(|s| *s)
+        .unwrap_or(0);
+
     let top_bar_frame = ui::Frame {
         inner_margin: ui::Margin::symmetric(10.0, 10.0),
         fill: ui::Color32::from_rgba_unmultiplied(0, 0, 0, 45),
@@ -144,6 +155,18 @@ fn ui_function(context: &ui::Context, app_state: &mut AppState) {
                 );
                 ui.label(
                     ui::RichText::new(format!("{}", score))
+                        .color(ui::Color32::WHITE)
+                        .size(40.0)
+                        .strong(),
+                );
+                ui.add_space(30.0);
+                ui.label(
+                    ui::RichText::new("HIGHSCORE")
+                        .color(ui::Color32::WHITE)
+                        .size(40.0)
+                );
+                ui.label(
+                    ui::RichText::new(format!("{}", highscore))
                         .color(ui::Color32::WHITE)
                         .size(40.0)
                         .strong(),
@@ -253,6 +276,24 @@ fn setup_scene(app_state: &mut AppState, event_loop:  &mut EventLoop){
     spawn_pipes(app_state, event_loop, 25.0);
     spawn_pipes(app_state, event_loop, 30.0);
     spawn_pipes(app_state, event_loop, 35.0);
+}
+
+fn load_highscore() -> i32 {
+    if Path::new(HIGHSCORE_FILE).exists() {
+        if let Ok(mut file) = fs::File::open(HIGHSCORE_FILE) {
+            let mut contents = String::new();
+            if file.read_to_string(&mut contents).is_ok() {
+                return contents.trim().parse::<i32>().unwrap_or(0);
+            }
+        }
+    }
+    0 // Default highscore
+}
+
+fn save_highscore(score: i32) {
+    if let Ok(mut file) = fs::File::create(HIGHSCORE_FILE) {
+        let _ = file.write_all(score.to_string().as_bytes());
+    }
 }
 
 fn player_update(app_state: &mut AppState){
@@ -472,6 +513,19 @@ fn check_collision(app_state: &mut AppState){
                 if live_tracker <= 0 {
                     *s = 0;
                     score = 0;
+                }
+            }
+        },
+        None => {}
+    }
+
+    // let's set the highscore
+    match app_state.get_state_data_value_mut::<i32>("HIGHSCORE"){
+        Some(hs) => {
+            if colliding == CollisionState::Coin && score > 0 {
+                if score > *hs {
+                    *hs = score;
+                    save_highscore(*hs);
                 }
             }
         },
